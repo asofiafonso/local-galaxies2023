@@ -1,0 +1,239 @@
+First code draft for scaling and dimming, with plots for image and spectrum (to still be aplied)
+
+
+"""
+Created on Wed Jul 19 22:55:18 2023
+
+@author: Joana Guimarães
+"""
+
+
+import numpy as np
+import astropy.io.fits as pyfits
+import scipy.ndimage as scndi
+from scipy.integrate import quad
+import matplotlib.pyplot as plt
+
+images =[]
+dimmings=[]
+spatials=[]
+combineds=[]
+lums=[]
+#####Redshift
+redshift=[0.5,1,1.2]
+
+##############################################################################################################################################################
+for i in redshift:
+    Obar = 0.049                 # Baryon Density Parameter
+    Omat = 0.3                   # Matter Density Parameter
+    Ok = 0.0                     # Curvature Density Parameter
+    Orad = 0.0                   # Radiation Density Parameter
+    Ow = 0.7                     # Dark Energy Density Parameter
+    w = -1.0                     # DE equation of state parameter p/rho=w
+    H0 = 70.0                    # km/s/Mpc
+    Msun = 1.989e30              # kg
+    Mpc = 3.0857e19              # km
+    c = 2.9979e5
+
+    #------------------------------------------------------------------------------------------------------------------------------------------------------
+    #Definitions for calculations
+    #------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+    def Hubble(z, pars=None):
+        "Returns the value for the standard Hubble parameter at a redshift z"
+        P = {'h': H0 / 100., 'r': Orad, 'm': Omat, 'k': Ok, 'l': Ow, 'w': w}
+        if not (pars == None):
+            for p in pars:
+                P[p] = pars[p]
+        return 100 * P['h'] * np.sqrt(P['r'] * (1 + z) ** 4. + P['m'] * (1 + z) ** 3. + P['k'] * (1 + z) ** 2. + P['l'] * (1 + z) ** (3 * (1. + P['w'])))
+            
+    def invHubble(z, pars=None):
+        return 1.0 / Hubble(z, pars=pars)
+            
+    def comov_rad(z, pars=None, npoints=10000):
+        """Returns the comoving radial distance corresponding to the redshift z in Mpc
+        If needed, multiply by h to get the result in units of (h**-1 Mpc)"""
+        radius, err = quad(invHubble, 0, z)
+        return c * radius
+
+    def angular_distance(z, pars=None):
+        "Computes the angular diameter distance (Mpc) in a standard LCDM cosmology"
+        return comov_rad(z, pars=pars) / (1 + z)
+    
+    #------------------------------------------------------------------------------------------------------------------------------------------------------
+    #Spatial scalling function
+    #------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+    def ferengi_downscale(cube_low, z_low, z_high, pix_low, pix_high, upscale=False, nofluxscale=True, evo=None):
+        da_in = angular_distance(z_low)
+        da_out = angular_distance(z_high)
+        
+        dl_in = da_in * (1 + z_low) ** 2
+        dl_out = da_out * (1 + z_high) ** 2
+
+        if evo is not None:
+            evo_fact = evo(z_low, z_high)
+        else:
+            evo_fact = 1.0
+
+        mag_factor = (da_in / da_out) * (pix_low / pix_high)
+        if upscale == True:
+            mag_factor = 1.0 / mag_factor
+
+        lum_factor = (dl_in / dl_out) ** 2
+        if nofluxscale == True:
+            lum_factor = 1.0
+
+        cube_out = scndi.zoom(cube_low, (mag_factor, mag_factor, mag_factor), order=1)
+
+        return cube_out * lum_factor * evo_fact
+    
+    #--------------------------------------------------------------------------------------------------------------------------------------------------------
+    #Function for luminosity evolution (implemented in ferengi_downscale )
+    #--------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+    def lum_evolution(zlow, zhigh):
+        "Defined Luminosity evolution from L* of Sobral et al. 2013."
+        def luminosity(z):
+            logL = 0.45 * z + 41.87
+            return 10 ** logL
+        return luminosity(zhigh) / luminosity(zlow)
+    
+    #---------------------------------------------------------------------------------------------------------------------------------------------------------
+    #Dimming function
+    #---------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+    def correcteddata(z,data_cube):
+        dimming=(1+z)**3
+        data = data_cube/dimming
+        return data
+    
+    #Aplication of spatial 
+    
+    def spatial_scaling(cube_name, zlow, zhigh, pixscale_low, pixscale_high, evo=None):
+        cube = pyfits.getdata(cube_name)
+        cube = cube[:-1]
+        cube_downscale = ferengi_downscale(cube, zlow, zhigh, pixscale_low, pixscale_high, evo=evo)
+    
+        return cube_downscale
+    
+
+   #Constants and other needed things
+    cube_name ='C:/Users/Joana Guimarães/Desktop/SN2005hc.fits'
+    zlow = 0.017
+    zhigh = i
+    pixscale_low = 0.2
+    pixscale_high = 0.03
+    
+    #with lum evo
+    downscaled_cube = spatial_scaling(cube_name, zlow, zhigh, pixscale_low, pixscale_high, evo=lum_evolution)
+    combined_cube = correcteddata (zhigh,downscaled_cube)
+    collapsed_image = np.sum(combined_cube, axis = 0)
+    collapsed_spectrum3 = np.nansum(combined_cube, axis=(2,1))
+    lums.append(collapsed_spectrum3)
+    
+    #no lum evo
+    downscaled_cube2= spatial_scaling(cube_name, zlow, zhigh, pixscale_low, pixscale_high, evo=None)
+    combined_cube2 = correcteddata (zhigh,downscaled_cube2)
+    collapsed_image2= np.sum(combined_cube2, axis= 0)
+    collapsed_spectrum = np.nansum(downscaled_cube2, axis = (2,1))
+    spatials.append(collapsed_spectrum)
+    collapsed_spectrum2= np.nansum (combined_cube2,axis=(2,1))
+    combineds.append(collapsed_spectrum2)
+    
+    
+
+    
+    #Plot of images 
+    #--------------------------------------------------------------------------
+    #Scalling alone
+    #--------------------------------------------------------------------------
+    width, height = collapsed_image2.shape
+    crop_fraction = 0.5 
+
+    # Calculate the cropping coordinates
+    xs = int((1 - crop_fraction) * width / 2)
+    ys = int((1 - crop_fraction) * height / 2)
+    xe = int((1 + crop_fraction) * width / 2)
+    ye = int((1 + crop_fraction) * height / 2)
+
+    # Perform cropping
+    image_cropped2 = collapsed_image2[ys:ye, xs:xe]
+
+    plt.imshow(image_cropped2, cmap='inferno', vmax = 100000)
+    plt.title(f" Scalling z = {zhigh}")
+    plt.colorbar()
+    plt.show()
+    
+    #--------------------------------------------------------------------------
+    #Scalling and dimming
+    #--------------------------------------------------------------------------
+    width, height = collapsed_image.shape
+    crop_fraction = 0.5 
+
+    # Calculate the cropping coordinates
+    xs = int((1 - crop_fraction) * width / 2)
+    ys = int((1 - crop_fraction) * height / 2)
+    xe = int((1 + crop_fraction) * width / 2)
+    ye = int((1 + crop_fraction) * height / 2)
+
+    # Perform cropping
+    image_cropped = collapsed_image[ys:ye, xs:xe]
+
+    plt.imshow(image_cropped, cmap='inferno', vmax = 100000)
+    plt.title(f"Scalling and dimming z = {zhigh}")
+    plt.colorbar()
+    plt.show()
+    
+    
+    
+    
+    #spectrum plot
+    """ymin = np.min(collapsed_spectrum)
+    ymax = np.max(collapsed_spectrum)
+
+
+    #Plot original data 
+    plt.plot(collapsed_spectrum3, linewidth = 0.5)
+
+    plt.xlabel("Wavelength")
+    plt.ylabel("Flux")
+    #From the header of the file, found CRVAL1 = 29.202083, starting value of the axis
+    plt.xlim(29.2)
+    plt.ylim(ymin,ymax)
+    plt.title(f"z = {zhigh}")
+    #plt.savefig("sepz=0.png".format(redshift))
+    plt.show()"""
+
+"""plt.plot(spatials[0], label="0.5", linewidth=0.5)
+plt.plot(spatials[1], label ="1.5", linewidth=0.5)
+plt.plot(spatials[2], label = "3", linewidth=0.5)
+plt.title("Scalling")
+plt.xlim(480,930)
+
+plt.xlabel("Wavelength")
+plt.ylabel("Flux")
+plt.legend()
+plt.show()
+
+plt.plot(combineds[0], label="0.5", linewidth=0.5)
+plt.plot(combineds[1], label ="1.5", linewidth=0.5)
+plt.plot(combineds[2], label = "3", linewidth=0.5)
+plt.xlim(480,930)
+
+plt.title("Scalling and dimming")
+plt.xlabel("Wavelength")
+plt.ylabel("Flux")
+plt.legend()
+plt.show()
+    
+plt.plot(lums[0], label="0.5", linewidth=0.5)
+plt.plot(lums[1], label ="1.5", linewidth=0.5)
+plt.plot(lums[2], label = "3", linewidth=0.5)
+plt.xlim(480,930)
+
+plt.title("Luminosity evolution")
+plt.xlabel("Wavelength")
+plt.ylabel("Flux")
+plt.legend()
+plt.show()"""
