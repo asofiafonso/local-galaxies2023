@@ -1,0 +1,347 @@
+This code contains the work for the plot of the images with scaling, dimming and luminosity alone, plus scaling+dimming and all the effects together
+
+Created on Mon Jul 24 14:50:43 2023
+
+@author: Joana Guimarães
+"""
+import numpy as np
+import astropy.io.fits as pyfits
+
+from scipy.integrate import quad
+import matplotlib.pyplot as plt
+
+
+
+#------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+#Luminosity evolution alone
+#------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+
+
+redshift=[0.3,0.8,1.3]
+
+def lum_evolution(zlow, zhigh, data):
+    "Defined Luminosity evolution from L* of Sobral et al. 2013."
+    def luminosity(z):
+        logL = 0.45 * z + 41.87
+        return 10 ** logL
+    return (luminosity(zhigh) / luminosity(zlow))*data
+
+cube_name ='C:/Users/Joana Guimarães/Desktop/SN2005hc.fits'
+data1= pyfits.getdata(cube_name)
+data1= data1[:-1]
+collapsed = np.sum(data1, axis=0)
+width, height = collapsed.shape
+crop_fraction = 0.5 
+
+
+# Calculate the cropping coordinates
+xs = int((1 - crop_fraction) * width / 2)
+ys = int((1 - crop_fraction) * height / 2)
+xe = int((1 + crop_fraction) * width / 2)
+ye = int((1 + crop_fraction) * height / 2)
+
+# Perform cropping
+image_cropped1 = collapsed[ys:ye, xs:xe]
+plt.imshow(image_cropped1, cmap='inferno')
+plt.title("z = 0")
+plt.colorbar()
+plt.show()
+
+for i in redshift:
+    
+    cube=lum_evolution(0.017, i, data1)
+    collapsed_image = np.sum(cube, axis= 0)
+    
+    width, height = collapsed_image.shape
+    crop_fraction = 0.5 
+
+    # Calculate the cropping coordinates
+    xs = int((1 - crop_fraction) * width / 2)
+    ys = int((1 - crop_fraction) * height / 2)
+    xe = int((1 + crop_fraction) * width / 2)
+    ye = int((1 + crop_fraction) * height / 2)
+
+    # Perform cropping
+    image_cropped = collapsed_image[ys:ye, xs:xe]
+    plt.imshow(image_cropped, cmap='inferno', vmax=800000)
+    plt.title(f"Luminosity evolution z = {i}")
+    plt.colorbar()
+    plt.show()
+    
+#------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+#Others
+#------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+
+#for i in redshift:
+Obar = 0.049                 # Baryon Density Parameter
+Omat = 0.3                   # Matter Density Parameter
+Ok = 0.0                     # Curvature Density Parameter
+Orad = 0.0                   # Radiation Density Parameter
+Ow = 0.7                     # Dark Energy Density Parameter
+w = -1.0                     # DE equation of state parameter p/rho=w
+H0 = 70.0                   # km/s/Mpc
+Msun = 1.989e30              # kg
+Mpc = 3.0857e19              # km
+c = 2.9979e5
+
+#------------------------------------------------------------------------------------------------------------------------------------------------------
+#Definitions for calculations
+#------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+def Hubble(z, pars=None):
+    "Returns the value for the standard Hubble parameter at a redshift z"
+    P = {'h': H0 / 100., 'r': Orad, 'm': Omat, 'k': Ok, 'l': Ow, 'w': w}
+    if not (pars == None):
+        for p in pars:
+            P[p] = pars[p]
+    return 100 * P['h'] * np.sqrt(P['r'] * (1 + z) ** 4. + P['m'] * (1 + z) ** 3. + P['k'] * (1 + z) ** 2. + P['l'] * (1 + z) ** (3 * (1. + P['w'])))
+            
+def invHubble(z, pars=None):
+    return 1.0 / Hubble(z, pars=pars)
+            
+def comov_rad(z, pars=None, npoints=10000):
+    """Returns the comoving radial distance corresponding to the redshift z in Mpc
+    If needed, multiply by h to get the result in units of (h**-1 Mpc)"""
+    radius, err = quad(invHubble, 0, z)
+    return c * radius
+
+def angular_distance(z, pars=None):
+    "Computes the angular diameter distance (Mpc) in a standard LCDM cosmology"
+    return comov_rad(z, pars=pars) / (1 + z)
+    
+#------------------------------------------------------------------------------------------------------------------------------------------------------
+#Spatial scalling function
+#------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+def py_frebin2d(img,Nout,Mout,flux_scale=False):
+    """Special case of non-integer magnification for 2D arrays
+    from FREBIN of IDL Astrolib. DEPRECATED!!
+    """
+
+    N,M = img.shape
+
+    xbox = N/float(Nout)
+    ybox = M/float(Mout)
+
+    temp_y = np.zeros([N,Mout],dtype=np.float64)
+
+    for i in range(Mout):
+        rstart = i*ybox
+        istart = int(rstart)
+
+        rstop = rstart + ybox
+        if int(rstop) > M-1:
+            istop = M-1
+        else:
+            istop = int(rstop)
+
+        frac1 = rstart-istart
+        frac2 = 1.0 - (rstop-istop)
+        if istart == istop:
+            temp_y[:,i] = (1.0-frac1-frac2)*img[:,istart]
+        else:
+            temp_y[:,i] = np.sum(img[:,istart:istop+1],1) - frac1 * img[:,istart] - frac2 * img[:,istop]
+
+    temp_y = temp_y.transpose()
+    img_bin = np.zeros([Mout,Nout])
+
+    for i in range(Nout):
+        rstart = i*xbox
+        istart = int(rstart)
+
+        rstop = rstart + xbox
+        if int(rstop) > N-1:
+            istop = N-1
+        else:
+            istop = int(rstop)
+
+        frac1 = rstart-istart
+        frac2 = 1.0 - (rstop-istop)
+
+        if istart == istop:
+            img_bin[:,i] = (1.0-frac1-frac2)*temp_y[:,istart]
+        else:
+            img_bin[:,i] = np.sum(temp_y[:,istart:istop+1],1) - frac1 * temp_y[:,istart]- frac2 * temp_y[:,istop]
+
+    if flux_scale:
+        return img_bin.transpose()
+    else:
+        return img_bin.transpose()/(xbox*ybox)
+
+def downscale(image_low,z_low,z_high,pix_low,pix_hi,upscale=False,fluxscale=True,evo=None,pixscale=True):
+
+    da_in =angular_distance(z_low)
+    da_out = angular_distance(z_high)
+
+    dl_in=da_in*(1+z_low)**2    #cosmos.luminosity_distance(z_low)
+    dl_out=da_out*(1+z_high)**2 #cosmos.luminosity_distance(z_high)
+
+    if evo is not None:
+        evo_fact = evo(z_low,z_high)
+    else:
+        evo_fact=1.0
+
+    mag_factor = (da_in/da_out)*(pix_low/pix_hi)
+    if upscale is True:
+        mag_factor=1./mag_factor
+
+    lum_factor = (dl_in/dl_out)**2*(1.+z_high)/(1.+z_low)
+    if fluxscale is False:
+        lum_factor=1.0
+
+    if pixscale is False:
+        img_out = image_low
+    else:
+        N,M = image_low.shape
+        N_out = int(np.round(N*mag_factor))
+        M_out = int(np.round(M*mag_factor))
+        img_out = py_frebin2d(image_low,N_out,M_out,flux_scale=True)
+
+    return img_out*lum_factor*evo_fact
+    
+  
+#---------------------------------------------------------------------------------------------------------------------------------------------------------
+#Dimming function
+#---------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+def correcteddata(z,data_):
+    dimming=(1+z)**3
+    data = data_/dimming
+    return data
+    
+#Aplication of spatial 
+    
+
+    
+
+#Constants and other needed things
+#cube_name ='C:/Users/Joana Guimarães/Desktop/SN2005hc.fits'
+z_low = 0.017
+z_high = i
+pix_low = 0.2
+pix_hi = 0.03
+    
+    
+#Plot of images 
+#--------------------------------------------------------------------------
+#Scaling alone
+#--------------------------------------------------------------------------    
+    
+    
+for i in redshift:
+    cube_downscale = downscale(collapsed, z_low, i, pix_low, pix_hi)
+    print(cube_downscale)
+    print("------------------------------------------------------------------------")
+
+    """plt.imshow(cube_downscale, cmap='inferno')
+    plt.title("z = 0")
+    plt.colorbar()
+    plt.show()"""
+
+    width, height = cube_downscale.shape
+    crop_fraction = 0.5 
+
+    # Calculate the cropping coordinates
+    xs = int((1 - crop_fraction) * width / 2)
+    ys = int((1 - crop_fraction) * height / 2)
+    xe = int((1 + crop_fraction) * width / 2)
+    ye = int((1 + crop_fraction) * height / 2)
+
+    # Perform cropping
+    image_cropped = cube_downscale[ys:ye, xs:xe]
+    plt.imshow(image_cropped, cmap='inferno')
+    plt.title(f"Scaling z = {i}")
+    plt.colorbar()
+    plt.show()
+
+    
+#--------------------------------------------------------------------------
+#Scaling and dimming
+#--------------------------------------------------------------------------
+
+vmax = [4000, 600, 200]
+#for i,a in zip(redshift, vmax):
+for i in redshift: 
+    #vmax= a
+    downscaled_2= downscale(collapsed, z_low, i, pix_low, pix_hi)
+    combined_2 = correcteddata (i,downscaled_2)
+    vmax = 4000
+    vmax = correcteddata(i, vmax)
+    width, height = combined_2.shape
+    crop_fraction = 0.5 
+
+    # Calculate the cropping coordinates
+    xs = int((1 - crop_fraction) * width / 2)
+    ys = int((1 - crop_fraction) * height / 2)
+    xe = int((1 + crop_fraction) * width / 2)
+    ye = int((1 + crop_fraction) * height / 2)
+
+    # Perform cropping
+    image_cropped2 = combined_2[ys:ye, xs:xe]
+
+    plt.imshow(image_cropped2, cmap='inferno',vmax = vmax)
+    plt.title(f"Scaling and dimming z = {i}")
+    plt.colorbar()
+    plt.show()
+    vmax = 500
+    
+#------------------------------------------------------------------------------
+#Dimming
+#------------------------------------------------------------------------------
+    
+for i in redshift:
+
+    dim = correcteddata(i, data1)
+    coldim = np.sum( dim, axis= 0)
+    width, height = coldim.shape
+    crop_fraction = 0.5 
+
+    # Calculate the cropping coordinates
+    xs = int((1 - crop_fraction) * width / 2)
+    ys = int((1 - crop_fraction) * height / 2)
+    xe = int((1 + crop_fraction) * width / 2)
+    ye = int((1 + crop_fraction) * height / 2)
+
+    # Perform cropping
+    image_cropped3 = coldim[ys:ye, xs:xe]
+
+    plt.imshow(image_cropped3, cmap='inferno', vmax = 200000)
+    plt.title(f"Dimming z = {i}")
+    plt.colorbar()
+    plt.show()
+    
+#------------------------------------------------------------------------------
+#Every effect
+#------------------------------------------------------------------------------
+vmax =[6000, 1500, 800]
+for i,a in zip(redshift, vmax):
+    
+    downscaled_2= downscale(collapsed, z_low, i, pix_low, pix_hi)
+    combined_2 = correcteddata (i,downscaled_2)
+    wlum = lum_evolution(0.017, i, combined_2)
+    
+    print(vmax)
+    width, height = wlum.shape
+    crop_fraction = 0.5 
+
+    # Calculate the cropping coordinates
+    xs = int((1 - crop_fraction) * width / 2)
+    ys = int((1 - crop_fraction) * height / 2)
+    xe = int((1 + crop_fraction) * width / 2)
+    ye = int((1 + crop_fraction) * height / 2)
+
+    # Perform cropping
+    image_cropped2 = wlum[ys:ye, xs:xe]
+
+
+
+    plt.imshow(image_cropped2, cmap='inferno', vmax= a)
+    plt.title(f"Every effect z = {i}")
+    plt.colorbar()
+    plt.show()
+    vmax = 500
+    
