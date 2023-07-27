@@ -1,0 +1,109 @@
+Code for plot of image and spectrum of the original file and aplication of dimmming
+
+
+
+"""
+Created on Tue Jul 18 09:50:07 2023
+
+@author: Joana Guimarães
+"""
+
+import astropy.io.fits as fits
+from astropy.nddata import CCDData
+from astropy import units as u
+import numpy as np
+import matplotlib.pyplot as plt
+
+datafile = "C:/Users/Joana Guimarães/Desktop/SN2005hc.fits"
+
+
+# Load the data from the fits file
+data_cube = fits.getdata(datafile)
+data_cube = data_cube[:-1]
+
+# Create a CCDData object to work with the data
+ccd_data = CCDData(data=data_cube, unit=u.adu)
+#print(ccd_data)
+
+# Collapse the data cube along axis 0
+collapsed_image = np.sum((ccd_data.data), axis=0)
+
+
+# Save the collapsed image to a FITS file
+#fits.writeto('collapsed_image.fits', collapsed_image, overwrite=True)
+
+#In order do eliminate the rough edges of the image, Limit the axis presentation
+width, height = collapsed_image.shape
+crop_fraction = 0.5  
+    
+# Calculate the cropping coordinates
+xs = int((1 - crop_fraction) * width / 2)
+ys = int((1 - crop_fraction) * height / 2)
+xe = int((1 + crop_fraction) * width / 2)
+ye = int((1 + crop_fraction) * height / 2)
+
+# Perform cropping
+image_cropped = collapsed_image[ys:ye, xs:xe]
+
+
+#As a way to maintain the scales of the color bar in the images I limeted to the original axis from the raw data
+#vmin = np.min(image_cropped)
+#vmax = np.max(image_cropped)
+vmax=100
+vmin=0
+plt.imshow(image_cropped, cmap='inferno')
+plt.title("z = 0")
+plt.colorbar()
+plt.show()
+
+
+
+redshift =[0.5,1.5,3]
+def correcteddata(z):
+    dimming=(1+z)**3
+    data_corrected = data_cube/dimming
+    ccddata = CCDData(data = data_corrected, unit=u.adu)
+    return ccddata
+
+
+for z in redshift:
+    ccddata=correcteddata(z)
+    collapsed_imagez = np.sum(ccddata.data, axis = 0)
+    image_cropped1 = collapsed_imagez[ys:ye,xs:xe]
+    #images.append(image_cropped1)
+    plt.imshow(image_cropped1, cmap='inferno', vmin=0, vmax=800000)  
+    plt.title("z = {}".format(z))
+    plt.colorbar()
+    plt.show()
+
+
+collapsed_spectrum = np.nansum(ccd_data.data, axis = (1,2))
+ymin = np.min(collapsed_spectrum)
+ymax = np.max(collapsed_spectrum)
+#print(collapsed_spectrum)
+plt.plot(collapsed_spectrum, linewidth = 0.5)
+plt.title("z = 0")    
+plt.xlabel("Wavelength")
+plt.ylabel("Flux")
+#From the header of the file, found CRVAL1 = 29.202083, starting value of the axis
+plt.xlim(29.202083)
+plt.ylim(ymin,ymax)
+    
+plt.show()
+    
+    
+for z in redshift:
+    ccddata = correcteddata(z)   
+    collapsed_spectrumz= np.nansum(ccddata.data, axis = (1,2))
+
+    
+    plt.plot(collapsed_spectrumz, linewidth= 0.5,label="z = {}".format(z))
+    plt.xlabel("Wavelength")
+    plt.ylabel("Flux")  
+    #From the header of the file, found CRVAL1 = 29.202083, starting value of the axis
+    plt.xlim(29.202083)
+    #plt.ylim(ymin,ymax)
+    plt.legend()
+    #plt.title("z = {}".format(z)) 
+    plt.title("Dimming")
+plt.show()
